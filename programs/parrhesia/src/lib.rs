@@ -4,13 +4,26 @@ pub mod states;
 
 // This is your program's public key and it will update
 // automatically when you build the project.
-declare_id!("DJR4rsWxMy6SDrqgVx2BwnGHWkSRqFGXYEG2sSRrrDKV");
+declare_id!("9ZCyv2foD3uoZAK2WjC6dkTPx3krCi5K25iUF1ska6TW");
+
+#[error_code]
+pub enum AppError {
+    #[msg("You are not authorized to perform this action.")]
+    Unauthorized,
+    #[msg("Not allowed")]
+    NotAllowed,
+    #[msg("Math operation overflow")]
+    MathOverflow,
+    #[msg("Already marked")]
+    AlreadyMarked,
+}
+
 
 #[program]
 mod parrhesia {
     use super::*;
 
-    pub fn create_profile(
+     pub fn create_profile(
         ctx: Context<CreateProfile>,
         name: String,
         bio: String
@@ -19,6 +32,7 @@ mod parrhesia {
         profile.authority = ctx.accounts.signer.key();
         profile.name = name;
         profile.bio = bio;
+        profile.membership_plan_count = 0;
 
         Ok(())
     }
@@ -31,21 +45,27 @@ mod parrhesia {
         amount: u64
     ) -> Result<()> {
         let membership_plan = &mut ctx.accounts.membership_plan;
-        membership_plan.authority = ctx.accounts.signer.key();
+        let profile = &mut ctx.accounts.profile;
+        
+        membership_plan.authority = ctx.accounts.authority.key();
         membership_plan.name = name;
         membership_plan.description = description;
         membership_plan.amount = amount;
         membership_plan.count = 0;
 
+        profile.membership_plan_count = profile.membership_plan_count.checked_add(1).unwrap();
+
         Ok(())
     }
 
-    pub fn buy_membership(ctx: Context<BuyMembership>) -> Result<()> {
+    pub fn buy_membership(ctx: Context<BuyMembership>, pk: Pubkey) -> Result<()> {
         let transaction_msg = anchor_lang::solana_program::system_instruction::transfer(
             &ctx.accounts.signer.key(),
             &ctx.accounts.membership_plan.key(),
             ctx.accounts.membership_plan.amount
         );
+
+        // TODO handle error
         anchor_lang::solana_program::program::invoke(
             &transaction_msg,
             &[
@@ -99,19 +119,35 @@ pub struct CreateProfile<'info> {
 }
 
 #[derive(Accounts)]
+#[instruction()]
 pub struct CreateMembershipPlan<'info> {
-    #[account(init, payer=signer, space=10000, seeds=[b"MEMBERSHIP_PLAN_STATE".as_ref(), signer.key().as_ref()], bump)]
-    pub membership_plan: Account<'info, states::MembershipPlan>,
+    
     #[account(mut)]
-    pub signer: Signer<'info>,
+    pub authority: Signer<'info>,
+    
+    #[account(
+        mut,
+        seeds = [b"PROFILE_STATE", authority.key().as_ref()],
+        bump,
+        has_one = authority
+    )]
+    pub profile: Box<Account<'info, states::Profile>>,
+    
+    #[account(
+        init, 
+        payer=authority, 
+        space=8 + std::mem::size_of::<states::MembershipPlan>(), 
+        seeds=[b"MEMBERSHIP_PLAN_STATE", authority.key().as_ref(), &[profile.membership_plan_count as u8].as_ref()], 
+        bump)]
+    pub membership_plan: Box<Account<'info, states::MembershipPlan>>,
     pub system_program: Program<'info, System>,
 }
 
-
 #[derive(Accounts)]
+#[instruction(pk: Pubkey)]
 pub struct BuyMembership<'info> {
     #[account(mut)]
-    pub membership_plan: Account<'info, states::MembershipPlan>,
+    pub membership_plan: Box<Account<'info, states::MembershipPlan>>,
     #[account(mut)]
     pub signer: Signer<'info>,
     pub system_program: Program<'info, System>,
