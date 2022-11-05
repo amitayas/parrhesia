@@ -1,23 +1,13 @@
 use anchor_lang::prelude::*;
 
 pub mod states;
+pub mod error;
+
+use crate::{error::*};
 
 // This is your program's public key and it will update
 // automatically when you build the project.
 declare_id!("9ZCyv2foD3uoZAK2WjC6dkTPx3krCi5K25iUF1ska6TW");
-
-#[error_code]
-pub enum AppError {
-    #[msg("You are not authorized to perform this action.")]
-    Unauthorized,
-    #[msg("Not allowed")]
-    NotAllowed,
-    #[msg("Math operation overflow")]
-    MathOverflow,
-    #[msg("Already marked")]
-    AlreadyMarked,
-}
-
 
 #[program]
 mod parrhesia {
@@ -36,7 +26,6 @@ mod parrhesia {
 
         Ok(())
     }
-
     
     pub fn create_membership_plan(
         ctx: Context<CreateMembershipPlan>,
@@ -58,7 +47,9 @@ mod parrhesia {
         Ok(())
     }
 
-    pub fn buy_membership(ctx: Context<BuyMembership>, pk: Pubkey) -> Result<()> {
+    pub fn buy_membership(ctx: Context<BuyMembership>) -> Result<()> {
+        require!(ctx.accounts.membership_plan.authority == ctx.accounts.authority.authority, AppError::NotAllowed);
+        
         let transaction_msg = anchor_lang::solana_program::system_instruction::transfer(
             &ctx.accounts.signer.key(),
             &ctx.accounts.membership_plan.key(),
@@ -84,7 +75,7 @@ mod parrhesia {
     ) -> Result<()> {
         
         let post = &mut ctx.accounts.post;
-        post.authority = ctx.accounts.signer.key();
+        post.authority = ctx.accounts.authority.key();
         post.body = body;
 
         Ok(())
@@ -147,6 +138,8 @@ pub struct CreateMembershipPlan<'info> {
 #[instruction(pk: Pubkey)]
 pub struct BuyMembership<'info> {
     #[account(mut)]
+    pub authority: Account<'info, states::Profile>,
+    #[account(mut)]
     pub membership_plan: Box<Account<'info, states::MembershipPlan>>,
     #[account(mut)]
     pub signer: Signer<'info>,
@@ -155,11 +148,20 @@ pub struct BuyMembership<'info> {
 
 #[derive(Accounts)]
 pub struct CreatePost<'info> {
-    #[account(init, payer=signer, space=10000, seeds=[b"POST".as_ref(), signer.key().as_ref()], bump)]
-    pub post : Account<'info, states::Post>,
 
     #[account(mut)]
-    pub signer: Signer<'info>,
+    pub authority: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [b"PROFILE_STATE", authority.key().as_ref()],
+        bump,
+        has_one = authority
+    )]
+    pub profile: Account<'info, states::Profile>,
+
+    #[account(init, payer=authority, space=10000, seeds=[b"POST".as_ref(), authority.key().as_ref()], bump)]
+    pub post : Account<'info, states::Post>,
 
     pub system_program: Program<'info, System>
 }
