@@ -5,7 +5,8 @@ use anchor_lang::prelude::*;
 pub struct Profile {
     pub authority: Pubkey,
     pub name: String, 
-    pub bio: String
+    pub bio: String,
+    pub membership_plan_count: u8
 }
 
 #[account]
@@ -32,5 +33,3 @@ pub struct Comment {
     pub body: String,
     pub post: Pubkey
 }
-
-
